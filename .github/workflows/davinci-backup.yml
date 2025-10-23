@@ -6,6 +6,10 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch: # 允许手动触发
 
+permissions:
+  contents: write
+  actions: read
+
 jobs:
   docker-backup:
     runs-on: ubuntu-latest
@@ -81,6 +85,7 @@ jobs:
         files: ${{ env.BACKUP_FILE }}
         name: "🗄️ 达芬奇数据库备份 ${{ github.run_number }}"
         make_latest: false
+
         body: |
           ## 🗄️ 达芬奇数据库自动备份
           
