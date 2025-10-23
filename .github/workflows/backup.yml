@@ -14,20 +14,19 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Install PostgreSQL 17 client
+    - name: Setup PostgreSQL client
       run: |
-        # 添加 PostgreSQL 官方 APT 仓库
-        sudo apt-get update
-        sudo apt-get install -y wget ca-certificates
-        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
-        echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-        
-        # 安装 PostgreSQL 17 客户端
-        sudo apt-get update
-        sudo apt-get install -y postgresql-client-17
+        # 尝试安装 PostgreSQL 17，如果失败则使用 Docker
+        if ! (sudo apt-get update && sudo apt-get install -y wget ca-certificates && \
+              wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add - && \
+              echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list && \
+              sudo apt-get update && sudo apt-get install -y postgresql-client-17); then
+          echo "PostgreSQL 17 安装失败，使用 Docker 方案"
+          sudo apt-get install -y postgresql-client
+        fi
         
         # 验证版本
-        pg_dump --version
+        pg_dump --version || echo "将使用 Docker 备份"
         
     - name: Create backup
       env:
@@ -40,15 +39,32 @@ jobs:
         
         echo "🔄 开始备份达芬奇数据库..."
         
-        # 创建备份
-        PGPASSWORD="$SUPABASE_PASSWORD" pg_dump \
-          -h "$SUPABASE_HOST" \
-          -p 6543 \
-          -U "$SUPABASE_USER" \
-          -d postgres \
-          -f "$BACKUP_FILE" \
-          --no-sync \
-          --verbose
+        # 创建备份 - 使用 Docker 确保版本兼容
+        if command -v pg_dump >/dev/null 2>&1 && pg_dump --version | grep -q "17\."; then
+          echo "使用本地 PostgreSQL 17 客户端"
+          PGPASSWORD="$SUPABASE_PASSWORD" pg_dump \
+            -h "$SUPABASE_HOST" \
+            -p 6543 \
+            -U "$SUPABASE_USER" \
+            -d postgres \
+            -f "$BACKUP_FILE" \
+            --no-sync \
+            --verbose
+        else
+          echo "使用 Docker PostgreSQL 17 客户端"
+          docker run --rm \
+            -e PGPASSWORD="$SUPABASE_PASSWORD" \
+            -v $(pwd):/backup \
+            postgres:17 \
+            pg_dump \
+            -h "$SUPABASE_HOST" \
+            -p 6543 \
+            -U "$SUPABASE_USER" \
+            -d postgres \
+            -f "/backup/$BACKUP_FILE" \
+            --no-sync \
+            --verbose
+        fi
           
         # 压缩备份
         gzip "$BACKUP_FILE"
