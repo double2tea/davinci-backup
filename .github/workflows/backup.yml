@@ -14,10 +14,20 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Install PostgreSQL client
+    - name: Install PostgreSQL 17 client
       run: |
+        # 添加 PostgreSQL 官方 APT 仓库
         sudo apt-get update
-        sudo apt-get install -y postgresql-client
+        sudo apt-get install -y wget ca-certificates
+        wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+        echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+        
+        # 安装 PostgreSQL 17 客户端
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client-17
+        
+        # 验证版本
+        pg_dump --version
         
     - name: Create backup
       env:
