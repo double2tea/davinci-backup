@@ -75,15 +75,16 @@ jobs:
         
     - name: Upload backup to GitHub Releases
       if: success()
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
-        tag_name: backup-$(date +"%Y%m%d-%H%M%S")
+        tag_name: backup-${{ github.run_number }}
         files: ${{ env.BACKUP_FILE }}
-        name: "🗄️ 达芬奇数据库备份 $(date +'%Y年%m月%d日 %H:%M')"
+        name: "🗄️ 达芬奇数据库备份 ${{ github.run_number }}"
+        make_latest: false
         body: |
           ## 🗄️ 达芬奇数据库自动备份
           
-          📅 **备份时间**: $(date +'%Y-%m-%d %H:%M:%S UTC')  
+          📅 **备份时间**: ${{ github.event.head_commit.timestamp }}  
           📊 **备份文件**: `${{ env.BACKUP_FILE }}`  
           📏 **文件大小**: ${{ env.BACKUP_SIZE }}  
           🐳 **备份方式**: Docker PostgreSQL 17  
@@ -92,9 +93,7 @@ jobs:
           
           ### 1. 下载并解压备份文件
           ```bash
-          # 下载备份文件
-          wget https://github.com/double2tea/davinci-backup/releases/download/backup-$(date +"%Y%m%d-%H%M%S")/${{ env.BACKUP_FILE }}
-          
+          # 下载备份文件（右键点击下面的文件链接）
           # 解压备份文件
           gunzip ${{ env.BACKUP_FILE }}
           ```
@@ -102,7 +101,7 @@ jobs:
           ### 2. 恢复到数据库
           ```bash
           # 恢复到 Supabase 数据库
-          psql -h your-host -p 6543 -U your-user -d postgres < davinci_backup_*.sql
+          psql -h aws-1-ap-south-1.pooler.supabase.com -p 6543 -U postgres.euxpqtozrrxmjmfioyaw -d postgres < davinci_backup_*.sql
           ```
           
           ### 3. 在达芬奇中重新连接
@@ -112,6 +111,14 @@ jobs:
           🤖 此备份由 GitHub Actions 自动创建
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Upload backup as artifact (backup method)
+      if: failure() || success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: davinci-backup-${{ github.run_number }}
+        path: ${{ env.BACKUP_FILE }}
+        retention-days: 30
         
     - name: Clean old releases
       if: success()
