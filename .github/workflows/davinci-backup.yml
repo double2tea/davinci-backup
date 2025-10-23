@@ -1,0 +1,135 @@
+name: DaVinci Database Docker Backup
+
+on:
+  schedule:
+    # 每天北京时间上午10点执行（UTC 2点）
+    - cron: '0 2 * * *'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  docker-backup:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Pull PostgreSQL 17 Docker image
+      run: |
+        echo "🐳 拉取 PostgreSQL 17 Docker 镜像..."
+        docker pull postgres:17
+        echo "✅ PostgreSQL 17 镜像准备完成"
+        
+        # 验证 Docker 镜像中的 pg_dump 版本
+        docker run --rm postgres:17 pg_dump --version
+        
+    - name: Create database backup using Docker
+      env:
+        SUPABASE_HOST: ${{ secrets.SUPABASE_HOST }}
+        SUPABASE_USER: ${{ secrets.SUPABASE_USER }}
+        SUPABASE_PASSWORD: ${{ secrets.SUPABASE_PASSWORD }}
+      run: |
+        echo "🔄 开始使用 Docker 备份达芬奇数据库..."
+        
+        # 生成备份文件名
+        DATE=$(date +"%Y%m%d_%H%M%S")
+        BACKUP_FILE="davinci_backup_$DATE.sql"
+        
+        echo "📅 备份时间: $(date)"
+        echo "📁 备份文件: $BACKUP_FILE"
+        
+        # 使用 Docker PostgreSQL 17 创建备份
+        docker run --rm \
+          -e PGPASSWORD="$SUPABASE_PASSWORD" \
+          -v $(pwd):/workspace \
+          --workdir /workspace \
+          postgres:17 \
+          pg_dump \
+          -h "$SUPABASE_HOST" \
+          -p 6543 \
+          -U "$SUPABASE_USER" \
+          -d postgres \
+          -f "$BACKUP_FILE" \
+          --no-sync \
+          --verbose
+        
+        # 检查备份是否成功
+        if [ -f "$BACKUP_FILE" ]; then
+          echo "✅ 备份文件创建成功"
+          
+          # 压缩备份文件
+          gzip "$BACKUP_FILE"
+          COMPRESSED_FILE="${BACKUP_FILE}.gz"
+          
+          # 显示文件信息
+          BACKUP_SIZE=$(du -h "$COMPRESSED_FILE" | cut -f1)
+          echo "📊 压缩后文件大小: $BACKUP_SIZE"
+          
+          # 设置环境变量供后续步骤使用
+          echo "BACKUP_FILE=$COMPRESSED_FILE" >> $GITHUB_ENV
+          echo "BACKUP_SIZE=$BACKUP_SIZE" >> $GITHUB_ENV
+        else
+          echo "❌ 备份文件创建失败"
+          exit 1
+        fi
+        
+    - name: Upload backup to GitHub Releases
+      if: success()
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: backup-$(date +"%Y%m%d-%H%M%S")
+        files: ${{ env.BACKUP_FILE }}
+        name: "🗄️ 达芬奇数据库备份 $(date +'%Y年%m月%d日 %H:%M')"
+        body: |
+          ## 🗄️ 达芬奇数据库自动备份
+          
+          📅 **备份时间**: $(date +'%Y-%m-%d %H:%M:%S UTC')  
+          📊 **备份文件**: `${{ env.BACKUP_FILE }}`  
+          📏 **文件大小**: ${{ env.BACKUP_SIZE }}  
+          🐳 **备份方式**: Docker PostgreSQL 17  
+          
+          ## 📥 恢复方法
+          
+          ### 1. 下载并解压备份文件
+          ```bash
+          # 下载备份文件
+          wget https://github.com/double2tea/davinci-backup/releases/download/backup-$(date +"%Y%m%d-%H%M%S")/${{ env.BACKUP_FILE }}
+          
+          # 解压备份文件
+          gunzip ${{ env.BACKUP_FILE }}
+          ```
+          
+          ### 2. 恢复到数据库
+          ```bash
+          # 恢复到 Supabase 数据库
+          psql -h your-host -p 6543 -U your-user -d postgres < davinci_backup_*.sql
+          ```
+          
+          ### 3. 在达芬奇中重新连接
+          重新启动 DaVinci Resolve 并连接到数据库即可看到恢复的项目。
+          
+          ---
+          🤖 此备份由 GitHub Actions 自动创建
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Clean old releases
+      if: success()
+      uses: dev-drprasad/delete-older-releases@v0.3.2
+      with:
+        keep_latest: 30
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Backup completion notification
+      if: always()
+      run: |
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "🎉 备份任务完成！"
+          echo "📦 备份文件已上传到 Releases"
+          echo "🔗 查看备份: https://github.com/double2tea/davinci-backup/releases"
+        else
+          echo "❌ 备份任务失败"
+          echo "🔍 请检查日志以了解详细错误信息"
+        fi
