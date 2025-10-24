@@ -32,6 +32,7 @@ jobs:
         SUPABASE_HOST: ${{ secrets.SUPABASE_HOST }}
         SUPABASE_USER: ${{ secrets.SUPABASE_USER }}
         SUPABASE_PASSWORD: ${{ secrets.SUPABASE_PASSWORD }}
+        BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
       run: |
         echo "🔄 开始使用 Docker 备份达芬奇数据库..."
         
@@ -65,13 +66,30 @@ jobs:
           gzip "$BACKUP_FILE"
           COMPRESSED_FILE="${BACKUP_FILE}.gz"
           
-          # 显示文件信息
-          BACKUP_SIZE=$(du -h "$COMPRESSED_FILE" | cut -f1)
-          echo "📊 压缩后文件大小: $BACKUP_SIZE"
+          # 加密备份文件
+          ENCRYPTED_FILE="${BACKUP_FILE}.encrypted"
+          echo "� 开始加密备份小文件..."
           
-          # 设置环境变量供后续步骤使用
-          echo "BACKUP_FILE=$COMPRESSED_FILE" >> $GITHUB_ENV
-          echo "BACKUP_SIZE=$BACKUP_SIZE" >> $GITHUB_ENV
+          # 使用 AES-256-CBC 加密
+          openssl enc -aes-256-cbc -salt -pbkdf2 -in "$COMPRESSED_FILE" -out "$ENCRYPTED_FILE" -k "${{ secrets.BACKUP_ENCRYPTION_KEY }}"
+          
+          if [ -f "$ENCRYPTED_FILE" ]; then
+            echo "✅ 备份文件加密成功"
+            
+            # 删除明文备份文件
+            rm -f "$COMPRESSED_FILE"
+            
+            # 显示加密文件信息
+            BACKUP_SIZE=$(du -h "$ENCRYPTED_FILE" | cut -f1)
+            echo "📊 加密后文件大小: $BACKUP_SIZE"
+            
+            # 设置环境变量供后续步骤使用
+            echo "BACKUP_FILE=$ENCRYPTED_FILE" >> $GITHUB_ENV
+            echo "BACKUP_SIZE=$BACKUP_SIZE" >> $GITHUB_ENV
+          else
+            echo "❌ 备份文件加密失败"
+            exit 1
+          fi
         else
           echo "❌ 备份文件创建失败"
           exit 1
@@ -90,23 +108,28 @@ jobs:
           ## 🗄️ 达芬奇数据库自动备份
           
           📅 **备份时间**: ${{ github.event.head_commit.timestamp }}  
-          📊 **备份文件**: `${{ env.BACKUP_FILE }}`  
+          📊 **加密备份文件**: `${{ env.BACKUP_FILE }}`  
           📏 **文件大小**: ${{ env.BACKUP_SIZE }}  
           🐳 **备份方式**: Docker PostgreSQL 17  
+          🔐 **安全级别**: AES-256-CBC 加密  
           
           ## 📥 恢复方法
           
-          ### 1. 下载并解压备份文件
+          ### 1. 下载并解密备份文件
           ```bash
-          # 下载备份文件（右键点击下面的文件链接）
+          # 下载加密备份文件（右键点击下面的文件链接）
+          
+          # 解密备份文件（需要加密密钥）
+          openssl enc -aes-256-cbc -d -pbkdf2 -in ${{ env.BACKUP_FILE }} -out backup.sql.gz -k "你的加密密钥"
+          
           # 解压备份文件
-          gunzip ${{ env.BACKUP_FILE }}
+          gunzip backup.sql.gz
           ```
           
           ### 2. 恢复到数据库
           ```bash
           # 恢复到 Supabase 数据库
-          psql -h aws-1-ap-south-1.pooler.supabase.com -p 6543 -U postgres.euxpqtozrrxmjmfioyaw -d postgres < davinci_backup_*.sql
+          psql -h aws-1-ap-south-1.pooler.supabase.com -p 6543 -U postgres.euxpqtozrrxmjmfioyaw -d postgres < backup.sql
           ```
           
           ### 3. 在达芬奇中重新连接
